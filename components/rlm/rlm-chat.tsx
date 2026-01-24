@@ -2,13 +2,34 @@
 
 import { useState, useCallback } from 'react';
 import { cn } from '@/lib/utils';
-import { PlayIcon, StopCircleIcon, RefreshCwIcon, UploadIcon, ChevronUpIcon, ChevronDownIcon } from 'lucide-react';
+import { PlayIcon, StopCircleIcon, RefreshCwIcon, UploadIcon, ChevronUpIcon, ChevronDownIcon, LoaderIcon, GithubIcon, CheckCircleIcon, XCircleIcon } from 'lucide-react';
 import { useRLM } from '@/hooks/use-rlm';
 import { RecursionTree } from './recursion-tree';
 import { CodePanel } from './code-panel';
 import { RLMStatus } from './rlm-status';
 import { ExecutionLog } from './execution-log';
 import { getNodeById } from '@/lib/rlm/tree-state';
+
+// Check if text looks like a GitHub URL
+function isGitHubUrl(text: string): boolean {
+    const trimmed = text.trim();
+    if (trimmed.match(/^https?:\/\/(www\.)?github\.com\/[^\/]+\/[^\/\s]+/)) {
+        return true;
+    }
+    if (trimmed.match(/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+$/) && !trimmed.includes(' ')) {
+        return true;
+    }
+    return false;
+}
+
+type GitHubStatus = 'idle' | 'loading' | 'success' | 'error';
+
+interface GitHubState {
+    status: GitHubStatus;
+    message: string;
+    repoName?: string;
+    fileCount?: number;
+}
 
 export interface RLMChatProps {
     initialContext?: string;
@@ -23,6 +44,9 @@ export function RLMChat({ initialContext = '', initialQuery = '', maxDepth = 1, 
     const [context, setContext] = useState(initialContext);
     const [finalResult, setFinalResult] = useState<string | null>(null);
     const [logCollapsed, setLogCollapsed] = useState(false);
+
+    // GitHub extraction state
+    const [githubState, setGithubState] = useState<GitHubState>({ status: 'idle', message: '' });
 
     // RLM hook
     const { treeState, isRunning, execute, reset, selectedNodeId, setSelectedNodeId, stats } = useRLM({
@@ -63,6 +87,59 @@ export function RLMChat({ initialContext = '', initialQuery = '', maxDepth = 1, 
         };
         reader.readAsText(file);
     }, []);
+
+    // handle GitHub URL extraction
+    const handleGitHubExtract = useCallback(async (url: string) => {
+        setGithubState({ status: 'loading', message: 'Downloading and extracting repository...' });
+
+        try {
+            const response = await fetch('/api/github-extract', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to extract repository');
+            }
+
+            setContext(data.content);
+            setGithubState({
+                status: 'success',
+                message: `Extracted ${data.fileCount} files from ${data.owner}/${data.repo}`,
+                repoName: `${data.owner}/${data.repo}`,
+                fileCount: data.fileCount,
+            });
+
+            // Clear success message after 5 seconds
+            setTimeout(() => {
+                setGithubState(prev => prev.status === 'success' ? { status: 'idle', message: '' } : prev);
+            }, 5000);
+        } catch (error) {
+            setGithubState({
+                status: 'error',
+                message: error instanceof Error ? error.message : 'Failed to extract repository',
+            });
+
+            // Clear error message after 5 seconds
+            setTimeout(() => {
+                setGithubState(prev => prev.status === 'error' ? { status: 'idle', message: '' } : prev);
+            }, 5000);
+        }
+    }, []);
+
+    // handle context change with GitHub URL detection
+    const handleContextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        const value = e.target.value;
+        setContext(value);
+
+        // Check if the pasted content is a GitHub URL
+        if (isGitHubUrl(value) && githubState.status !== 'loading') {
+            handleGitHubExtract(value);
+        }
+    }, [githubState.status, handleGitHubExtract]);
 
     return (
         <div className={cn('flex flex-col h-full', className)}>
@@ -154,13 +231,49 @@ export function RLMChat({ initialContext = '', initialQuery = '', maxDepth = 1, 
                                 <input type='file' className='hidden' accept='.txt,.json,.csv,.md' onChange={handleFileUpload} />
                             </label>
                         </div>
-                        <textarea
-                            value={context}
-                            onChange={(e) => setContext(e.target.value)}
-                            placeholder='Paste your data here or upload a file...'
-                            className='w-full h-24 px-3 py-2 text-sm font-mono border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent'
-                            disabled={isRunning}
-                        />
+
+                        {/* GitHub status message */}
+                        {githubState.status !== 'idle' && (
+                            <div className={cn(
+                                'flex items-center gap-2 px-3 py-2 mb-2 rounded-lg text-sm',
+                                githubState.status === 'loading' && 'bg-blue-50 text-blue-700',
+                                githubState.status === 'success' && 'bg-green-50 text-green-700',
+                                githubState.status === 'error' && 'bg-red-50 text-red-700'
+                            )}>
+                                {githubState.status === 'loading' && (
+                                    <LoaderIcon className='w-4 h-4 animate-spin' />
+                                )}
+                                {githubState.status === 'success' && (
+                                    <CheckCircleIcon className='w-4 h-4' />
+                                )}
+                                {githubState.status === 'error' && (
+                                    <XCircleIcon className='w-4 h-4' />
+                                )}
+                                <span>{githubState.message}</span>
+                            </div>
+                        )}
+
+                        <div className='relative'>
+                            <textarea
+                                value={context}
+                                onChange={handleContextChange}
+                                placeholder='Paste your data, GitHub URL (e.g., owner/repo), or upload a file...'
+                                className={cn(
+                                    'w-full h-24 px-3 py-2 text-sm font-mono border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent',
+                                    githubState.status === 'loading' && 'opacity-50'
+                                )}
+                                disabled={isRunning || githubState.status === 'loading'}
+                            />
+                            {githubState.status === 'loading' && (
+                                <div className='absolute inset-0 flex items-center justify-center bg-white/50 rounded-lg'>
+                                    <div className='flex items-center gap-2 text-blue-600'>
+                                        <GithubIcon className='w-5 h-5' />
+                                        <LoaderIcon className='w-4 h-4 animate-spin' />
+                                        <span className='text-sm font-medium'>Extracting repository...</span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {/* action buttons */}
