@@ -20,15 +20,28 @@ export const RLM_SYSTEM_PROMPT = `You are a Recursive Language Model (RLM). You 
 - \`FINAL(result: str)\`: Return final answer
 - \`print(...)\`: Debug output
 
+### STRING SAFETY - CRITICAL!
+File content may contain \`"""\`, \`{\`, \`}\`, quotes, etc. that break f-strings/string literals.
+**ALWAYS use string concatenation or json.dumps() when embedding variable content:**
+\`\`\`python
+# WRONG - breaks if content has """ or { or }
+prompt = f"""Analyze: {content}"""  # WILL CRASH!
+
+# CORRECT - safe string building
+prompt = "Analyze this file:\\n" + content  # concatenation
+prompt = "File: " + json.dumps(content)  # JSON escapes special chars
+prompt = "Content:\\n" + content[:5000]  # truncate + concat
+\`\`\`
+
 ### IMPORTANT: Use llm_query_batch() for Speed!
 When you have multiple comparisons to make, batch them together:
 \`\`\`python
 # SLOW - sequential
 for pair in pairs:
-    result = llm_query(f"Check: {pair}")  # waits for each one
+    result = llm_query("Check: " + str(pair))  # waits for each one
 
 # FAST - parallel (10x+ speedup)
-prompts = [f"Check: {pair}" for pair in pairs]
+prompts = ["Check: " + str(pair) for pair in pairs]
 results = llm_query_batch(prompts)  # runs ALL at once
 \`\`\`
 
@@ -53,7 +66,7 @@ for line in lines:
     if match:
         statements.append((match.group(1), match.group(2)))
 
-print(f"Found {len(statements)} statements")
+print("Found " + str(len(statements)) + " statements")
 
 # build all pairs
 all_pairs = []
@@ -61,17 +74,17 @@ for i in range(len(statements)):
     for j in range(i+1, len(statements)):
         all_pairs.append((statements[i], statements[j]))
 
-print(f"Total pairs to check: {len(all_pairs)}")
+print("Total pairs to check: " + str(len(all_pairs)))
 
 # CHUNK pairs - each sub-LLM checks MANY pairs at once
 CHUNK_SIZE = 50  # 50 pairs per sub-node
 chunks = [all_pairs[i:i+CHUNK_SIZE] for i in range(0, len(all_pairs), CHUNK_SIZE)]
 
-# build prompts - each prompt checks multiple pairs
+# build prompts - each prompt checks multiple pairs (use + not f-strings!)
 prompts = []
 for chunk in chunks:
-    pair_text = "\\n".join([f"- {p[0][0]} vs {p[1][0]}: \\"{p[0][1]}\\" vs \\"{p[1][1]}\\"" for p in chunk])
-    prompts.append(f"Which pairs contradict? List ONLY the contradicting pair IDs (e.g., 'STMT_001 vs STMT_005'). If none, say NONE.\\n\\n{pair_text}")
+    pair_text = "\\n".join(["- " + p[0][0] + " vs " + p[1][0] + ": " + repr(p[0][1]) + " vs " + repr(p[1][1]) for p in chunk])
+    prompts.append("Which pairs contradict? List ONLY contradicting pair IDs (e.g., 'STMT_001 vs STMT_005'). If none, say NONE.\\n\\n" + pair_text)
 
 print(f"Spawning {len(prompts)} sub-agents (each checks {CHUNK_SIZE} pairs)...")
 
@@ -98,8 +111,8 @@ lines = [l.strip() for l in context.strip().split('\\n') if l.strip()]
 CHUNK_SIZE = 100
 chunks = [lines[i:i+CHUNK_SIZE] for i in range(0, len(lines), CHUNK_SIZE)]
 
-# build prompts - each checks a chunk
-prompts = [f"Count items matching criteria X. Return just the number.\\n\\n" + "\\n".join(chunk) for chunk in chunks]
+# build prompts - each checks a chunk (use + not f-strings for content!)
+prompts = ["Count items matching criteria X. Return just the number.\\n\\n" + "\\n".join(chunk) for chunk in chunks]
 print(f"Spawning {len(prompts)} sub-agents...")
 
 # parallel execution
@@ -117,11 +130,11 @@ count = context.count("pattern")  # NO! Must use llm_query
 FINAL(str(count))
 \`\`\`
 
-## CORRECT (uses llm_query)
+## CORRECT (uses llm_query + safe strings)
 \`\`\`python
-# GOOD - delegates to sub-LLMs
+# GOOD - delegates to sub-LLMs with safe string concatenation
 for chunk in chunks:
-    result = llm_query(f"Count pattern in: {chunk}")  # YES!
+    result = llm_query("Count pattern in:\\n" + chunk)  # YES! Use + not f-strings
     counts.append(int(result))
 FINAL(str(sum(counts)))
 \`\`\`

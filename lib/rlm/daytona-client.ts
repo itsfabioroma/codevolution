@@ -26,19 +26,36 @@ let sharedSandbox: Sandbox | null = null;
 
 // get or create shared sandbox with retry
 async function getSharedSandbox(): Promise<Sandbox> {
-    if (sharedSandbox) return sharedSandbox;
+    if (sharedSandbox) {
+        console.log('[Daytona] Reusing existing sandbox:', sharedSandbox.id);
+        return sharedSandbox;
+    }
 
     const maxRetries = 3;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             console.log(`[Daytona] Creating sandbox (attempt ${attempt}/${maxRetries})...`);
+            console.log(`[Daytona] API URL: ${process.env.DAYTONA_API_URL}, Target: ${process.env.DAYTONA_TARGET}`);
+
             sharedSandbox = await daytona.create({ language: 'python' });
-            console.log('[Daytona] Sandbox ready:', sharedSandbox.id);
+            console.log('[Daytona] Sandbox created:', sharedSandbox.id);
+
+            // verify sandbox works with simple test
+            console.log('[Daytona] Testing sandbox with simple code...');
+            const testResult = await sharedSandbox.process.codeRun('print("sandbox-ready")');
+            console.log('[Daytona] Test result:', testResult.result, 'Exit:', testResult.exitCode);
+
+            if (testResult.exitCode !== 0) {
+                throw new Error(`Sandbox test failed: ${testResult.result}`);
+            }
+
+            console.log('[Daytona] Sandbox verified and ready');
             return sharedSandbox;
         } catch (error) {
             console.error(`[Daytona] Attempt ${attempt} failed:`, error);
+            sharedSandbox = null;
             if (attempt === maxRetries) throw error;
-            await new Promise(r => setTimeout(r, 2000 * attempt)); // exponential backoff
+            await new Promise(r => setTimeout(r, 2000 * attempt));
         }
     }
     throw new Error('Failed to create sandbox');
@@ -63,13 +80,35 @@ export class RLMSandbox {
     async initialize(context: string): Promise<void> {
         this.sandbox = await getSharedSandbox();
 
+        // check context size
+        const contextSize = context.length;
+        const contextMB = contextSize / 1024 / 1024;
+        console.log(`[Daytona] Context size: ${contextMB.toFixed(2)} MB (${contextSize} chars)`);
+
+        if (contextSize > 50 * 1024 * 1024) {
+            console.warn(`[Daytona] Context exceeds 50MB - may cause sandbox issues`);
+        }
+
+        // for large contexts (>1MB), write to file instead of embedding in code
+        const useTempFile = contextSize > 1024 * 1024;
+
+        if (useTempFile) {
+            console.log(`[Daytona] Large context - writing to temp file...`);
+            const contextBuffer = Buffer.from(context, 'utf-8');
+            await this.sandbox.fs.uploadFile(contextBuffer, '/tmp/context.txt');
+            console.log(`[Daytona] Context written to /tmp/context.txt (${contextBuffer.length} bytes)`);
+        }
+
         // build runtime prefix that gets prepended to every execution
-        const escapedContext = JSON.stringify(context);
+        const contextLoader = useTempFile
+            ? `with open('/tmp/context.txt', 'r') as f:\n    context = f.read()`
+            : `context = ${JSON.stringify(context)}`;
+
         this.runtimePrefix = `
 import json
 import sys
 
-context = ${escapedContext}
+${contextLoader}
 
 def llm_query(prompt):
     if '_llm_cache' in globals() and prompt in _llm_cache:
@@ -96,7 +135,7 @@ def FINAL(result):
     print("__RLM_FINAL_END__")
 
 `;
-        console.log('[Daytona] Runtime initialized, context:', context.length, 'chars');
+        console.log('[Daytona] Runtime initialized, context:', context.length, 'chars', useTempFile ? '(via temp file)' : '(inline)');
     }
 
     async executeWithLlmSupport(code: string, llmQueryHandler: LLMQueryHandler): Promise<ExecutionResult> {
@@ -112,9 +151,36 @@ def FINAL(result):
 
             // run code with runtime prefix
             const fullCode = this.runtimePrefix + currentCode;
-            const result = await this.sandbox.process.codeRun(fullCode, undefined, 300000);
-            const output = result.result || '';
+            console.log(`[Daytona] Code length: ${fullCode.length} chars`);
+            console.log(`[Daytona] Code preview: ${fullCode.slice(0, 200)}...`);
+
+            let result;
+            try {
+                result = await this.sandbox.process.codeRun(fullCode, undefined, 300000);
+                console.log(`[Daytona] Raw result:`, JSON.stringify(result, null, 2).slice(0, 500));
+            } catch (execError) {
+                console.error(`[Daytona] Execution error:`, execError);
+                const errMsg = execError instanceof Error ? execError.message : String(execError);
+                return { success: false, output: '', error: `Execution failed: ${errMsg}` };
+            }
+
+            // validate result object
+            if (!result || typeof result !== 'object') {
+                console.error(`[Daytona] Invalid result object:`, result);
+                return { success: false, output: '', error: 'Sandbox returned invalid result' };
+            }
+
+            // check both result.result and artifacts.stdout
+            const output = result.result || (result as any).artifacts?.stdout || '';
             const exitCode = result.exitCode;
+            console.log(`[Daytona] Output: "${output.slice(0, 200)}...", Exit: ${exitCode}`);
+
+            // handle undefined exit code (sandbox killed/crashed)
+            if (exitCode === undefined || exitCode === null) {
+                console.error(`[Daytona] Sandbox returned undefined exit code - likely crashed or OOM`);
+                const errDetail = output ? `Output before crash: ${output.slice(0, 500)}` : 'No output captured';
+                return { success: false, output: fullOutput + output, error: `Sandbox crashed (no exit code). ${errDetail}` };
+            }
 
             console.log(`[Daytona] Exit: ${exitCode}, Output: ${output.length} chars`);
             fullOutput += output;

@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { RLMChat } from '@/components/rlm/rlm-chat';
-import { generateOolongPairs } from '@/lib/rlm/oolong-generator';
 import { generateContradictionDataset } from '@/lib/rlm/contradiction-generator';
+import { generateSampleCodebase } from '@/lib/doc-agent/sample-codebase';
 import { UCLogo } from '@/components/rlm/uc-logo';
 
 // demo types
@@ -19,31 +19,20 @@ type DemoExample = {
 const DEMO_EXAMPLES: DemoExample[] = [
     // Contradiction Finder
     {
-        name: 'Contradiction Finder (500)',
+        name: 'Contradiction Finder',
         description: '500 statements, ~125K pair comparisons',
         query: 'Find all contradicting statement pairs. Use llm_query_batch() for maximum parallelism.',
         contextGenerator: () => generateContradictionDataset(500, 0.1).statements,
         expectedAnswer: '~50 contradictions',
     },
 
-    // OOLONG benchmarks
+    // Self-learning Documentation
     {
-        name: 'OOLONG-Pairs (1K)',
-        description: 'Count pairs with diff=10',
-        query: 'Count how many pairs have values that differ by exactly 10.',
-        contextGenerator: () => generateOolongPairs(1000),
-    },
-    {
-        name: 'OOLONG-Pairs (10K)',
-        description: 'Larger scale counting',
-        query: 'Count pairs where abs(value_a - value_b) == 10. Use batch processing.',
-        contextGenerator: () => generateOolongPairs(10000),
-    },
-    {
-        name: 'OOLONG + Prime Check',
-        description: 'Count pairs where diff=10 AND both values are prime',
-        query: 'Find pairs where abs(value_a - value_b) == 10 AND both are prime. Use llm_query_batch().',
-        contextGenerator: () => generateOolongPairs(500),
+        name: 'Self-learning Docs',
+        description: 'Generate docs for a codebase',
+        query: 'Generate documentation for this codebase. For each file, use llm_query() to analyze it and return JSON with: summary, exports, dependencies, keyFunctions, tags. Then aggregate into a project overview.',
+        contextGenerator: () => generateSampleCodebase(),
+        expectedAnswer: 'Markdown documentation',
     },
 ];
 
@@ -70,8 +59,8 @@ export default function RLMPage() {
                                 <UCLogo className='w-5 h-5 text-white' />
                             </div>
                             <div>
-                                <h1 className='text-lg font-semibold text-gray-900'>10M Token Global Reasoning</h1>
-                                <p className='text-xs text-gray-500'>The Recursive Reasoning Engine</p>
+                                <h1 className='text-lg font-semibold text-gray-900'>20M Context Window Demo</h1>
+                                <p className='text-xs text-gray-500'>Self-evolving Agent Documentation</p>
                             </div>
                         </div>
 
