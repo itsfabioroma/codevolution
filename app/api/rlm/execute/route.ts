@@ -5,7 +5,7 @@ import { UltraContext } from 'ultracontext';
 import { nanoid } from 'nanoid';
 import type { RLMExecuteRequest, RLMEvent, RLMNode } from '@/lib/rlm/types';
 import { buildRLMPrompt, RLM_SUB_PROMPT } from '@/lib/rlm/rlm-prompt';
-import { createRLMSandbox } from '@/lib/rlm/e2b-client';
+import { createRLMSandbox } from '@/lib/rlm/daytona-client';
 
 // SSE encoder
 function encodeSSE(event: RLMEvent): string {
