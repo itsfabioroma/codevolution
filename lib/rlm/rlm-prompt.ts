@@ -86,7 +86,7 @@ for chunk in chunks:
     pair_text = "\\n".join(["- " + p[0][0] + " vs " + p[1][0] + ": " + repr(p[0][1]) + " vs " + repr(p[1][1]) for p in chunk])
     prompts.append("Which pairs contradict? List ONLY contradicting pair IDs (e.g., 'STMT_001 vs STMT_005'). If none, say NONE.\\n\\n" + pair_text)
 
-print(f"Spawning {len(prompts)} sub-agents (each checks {CHUNK_SIZE} pairs)...")
+print("Spawning " + str(len(prompts)) + " sub-agents (each checks " + str(CHUNK_SIZE) + " pairs)...")
 
 # run all chunks in parallel
 results = llm_query_batch(prompts)
@@ -99,7 +99,7 @@ for result in results:
             if 'vs' in line.lower():
                 contradictions.append(line.strip())
 
-FINAL(f"Found {len(contradictions)} contradictions:\\n" + "\\n".join(contradictions))
+FINAL("Found " + str(len(contradictions)) + " contradictions:\\n" + "\\n".join(contradictions))
 \`\`\`
 
 ### Counting with Criteria (CHUNKED)
@@ -113,14 +113,14 @@ chunks = [lines[i:i+CHUNK_SIZE] for i in range(0, len(lines), CHUNK_SIZE)]
 
 # build prompts - each checks a chunk (use + not f-strings for content!)
 prompts = ["Count items matching criteria X. Return just the number.\\n\\n" + "\\n".join(chunk) for chunk in chunks]
-print(f"Spawning {len(prompts)} sub-agents...")
+print("Spawning " + str(len(prompts)) + " sub-agents...")
 
 # parallel execution
 results = llm_query_batch(prompts)
 
 # sum counts
 total = sum(int(r.strip()) for r in results if r.strip().isdigit())
-FINAL(f"Total matching: {total}")
+FINAL("Total matching: " + str(total))
 \`\`\`
 
 ## WRONG (no llm_query)
